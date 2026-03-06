@@ -4,13 +4,16 @@ Bot otomatis untuk klik Nano button di thenanobutton.com menggunakan Playwright 
 
 ## ✨ Fitur Utama
 
-- 🚀 **Multi-Browser**: Jalankan hingga 5 browser bersamaan
+- 🚀 **Sequential Browser Launch**: Buka browser satu per satu, max 5 browser berhasil
 - 🌐 **Proxy Rotation**: Setiap browser menggunakan proxy berbeda (IP berbeda)
 - 🔐 **Auto CAPTCHA**: Deteksi dan klik Cloudflare Turnstile otomatis
-- 🖱️ **Auto Click**: Klik Nano button 200x otomatis per browser
-- 🔄 **Auto Restart**: Loop otomatis setelah selesai
+- 🖱️ **Smart Auto Click**: Klik lambat (250-500ms) di awal, cepat (80-120ms) setelah sukses
+- ✅ **Success Detection**: Deteksi centang hijau +$0.00000001 otomatis
+- 🚫 **Auto Close Failed**: Browser yang butuh referral langsung close
+- 💰 **Balance Tracking**: Monitor balance via API session
+- 💸 **Auto Withdraw**: Withdraw otomatis jika balance >= 0.00001 Nano
 - 📊 **Logging**: Log lengkap untuk monitoring
-- 📸 **Screenshot**: Capture otomatis saat error
+- 🔄 **Infinite Loop**: Terus berjalan sampai dapat 5 browser berhasil
 
 ## 📋 Persyaratan
 
@@ -70,8 +73,28 @@ MAX_CONCURRENT_BROWSERS = 5  # Maksimal 5 browser bersamaan
 ```python
 # Click settings
 CLICK_COUNT = 200  # Jumlah klik Nano button per browser
-CLICK_DELAY = 0.05  # 50ms delay antar klik
+CLICK_DELAY_MIN = 0.25  # Delay minimum (250ms) - lambat di awal
+CLICK_DELAY_MAX = 0.5  # Delay maximum (500ms) - lambat di awal
+CLICK_DELAY_FAST_MIN = 0.08  # Delay cepat (80ms) - setelah sukses
+CLICK_DELAY_FAST_MAX = 0.12  # Delay cepat (120ms) - setelah sukses
+CLICK_BATCH_SIZE = 10  # Klik per batch
+CLICK_BATCH_REST = 2  # Istirahat antar batch (seconds)
 ```
+
+### Setting Withdraw (OPSIONAL)
+
+```python
+# Nano withdrawal settings
+NANO_ADDRESS = ""  # ⬅️ ISI dengan alamat Nano Anda
+AUTO_WITHDRAW = False  # Set True untuk auto-withdraw
+WITHDRAW_THRESHOLD = 0.00001  # Minimum balance untuk withdraw
+CHECK_BALANCE_INTERVAL = 50  # Cek balance setiap 50 klik
+```
+
+**Cara aktifkan auto-withdraw:**
+1. Isi `NANO_ADDRESS` dengan alamat Nano Anda
+2. Ubah `AUTO_WITHDRAW = True`
+3. Bot akan auto-withdraw setiap balance >= 0.00001 Nano
 
 ### Setting CAPTCHA
 
@@ -135,23 +158,28 @@ python main.py --iterations 10
 
 ## 📊 Cara Kerja Bot
 
-1. **Launch Browser** - Buka browser dengan proxy berbeda
-2. **Navigate** - Buka URL dengan referral Anda
-3. **Auto CAPTCHA** - Klik CAPTCHA Cloudflare 1x
-4. **Auto Click** - Klik Nano button 200x (10 detik)
-5. **Screenshot** - Ambil screenshot hasil
-6. **Restart** - Ulangi dengan proxy baru
+### Sequential Browser Launch:
+1. **Launch Browser 1** - Buka dengan proxy 1
+2. **Cek Status** - Klik lambat (250-500ms) untuk avoid detection
+3. **Deteksi Sukses** - Jika hijau +$0.00000001 terdeteksi:
+   - Switch ke FAST MODE (80-120ms per klik)
+   - Terus klik sampai tidak hijau lagi
+   - Check balance setiap 50 klik
+   - Auto-withdraw jika balance >= 0.00001
+4. **Deteksi Gagal** - Jika "Please wait" tanpa hijau:
+   - Browser langsung close
+   - Launch Browser 2 sebagai pengganti
+5. **Repeat** - Terus loop sampai dapat 5 browser berhasil
 
 ### Timeline Per Browser:
-- Load page: ~3 detik
-- Klik CAPTCHA: ~1 detik
-- Klik Nano 200x: ~10 detik
-- **Total: ~15 detik per cycle**
+- **Browser Gagal**: ~5-10 detik (langsung close)
+- **Browser Berhasil**: Berjalan terus sampai tidak hijau lagi (bisa 10+ menit)
 
-### Multi-Browser (5 browser):
-- Semua browser jalan bersamaan (parallel)
-- 5 browser = 5x lebih cepat
-- Setiap browser pakai IP berbeda
+### Multi-Browser Strategy:
+- Max 5 browser berhasil berjalan bersamaan
+- Browser gagal langsung diganti baru
+- Setiap browser pakai IP berbeda (proxy rotation)
+- Browser berhasil tetap berjalan sampai earning stop
 
 ## 📁 Struktur Project
 
@@ -217,11 +245,28 @@ python main.py --loop
 
 ## 🎯 Tips & Trik
 
-1. **Gunakan Multi-Browser** - Jalankan 5 browser untuk hasil maksimal
+1. **Aktifkan Auto-Withdraw** - Isi `NANO_ADDRESS` dan set `AUTO_WITHDRAW = True`
 2. **Ganti Referral** - Jangan lupa ganti `REFERRAL_USERNAME` di `config.py`
-3. **Monitor Log** - Cek folder `logs/` untuk melihat progress
-4. **Cek Screenshot** - Lihat folder `screenshots/` untuk hasil
-5. **Proxy Rotation** - Bot otomatis ganti proxy setiap restart
+3. **Monitor Log** - Cek folder `logs/` untuk melihat progress dan balance
+4. **Biarkan Berjalan** - Bot akan terus loop sampai dapat 5 browser berhasil
+5. **Proxy Rotation** - Bot otomatis ganti proxy untuk setiap browser baru
+6. **Check Balance** - Bot akan log balance setiap 50 klik
+7. **Withdraw Otomatis** - Bot akan withdraw otomatis jika balance >= 0.00001
+
+## 🔍 Monitoring
+
+### Log Messages:
+- `✓✓✓ Click success confirmed! Switching to FAST MODE` - Browser berhasil
+- `⚠️⚠️⚠️ BROWSER NEEDS REFERRAL - CLOSING IMMEDIATELY` - Browser gagal
+- `Balance: X Nano` - Current balance
+- `✓ Withdraw successful!` - Withdraw berhasil
+- `📊 Status: X active, Y successful, Z failed` - Status keseluruhan
+
+### Session Stats:
+Bot akan log stats setiap browser selesai:
+- Final balance
+- Total earned
+- Total clicks
 
 ## ⚠️ Disclaimer
 
