@@ -27,6 +27,9 @@ def kill_bot_chrome_processes():
     except Exception as e:
         logger.error(f"Error killing bot Chrome processes: {e}")
     
+    # Clear all tracked PIDs after killing
+    bot_browser_pids.clear()
+    
     if killed_count > 0:
         logger.warning(f"Force killed {killed_count} bot Chrome processes")
     return killed_count
@@ -178,21 +181,47 @@ async def run_multi_browser(num_browsers: int = None) -> None:
         logger.warning(f"Not enough proxies! Have {len(config.PROXY_LIST)}, need {num_browsers}")
         num_browsers = len(config.PROXY_LIST)
     
+    # Rotate proxy list for each iteration (different IP each time)
+    import random
+    proxy_list_copy = config.PROXY_LIST.copy()
+    random.shuffle(proxy_list_copy)
+    
     # Create tasks for each browser
     tasks = []
     for i in range(num_browsers):
-        proxy = config.PROXY_LIST[i]
+        proxy = proxy_list_copy[i]
         task = run_browser_instance(i + 1, proxy)
         tasks.append(task)
     
-    # Run all browsers concurrently
+    # Run all browsers concurrently with overall timeout
     logger.info(f"Launching {num_browsers} browsers concurrently...")
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    logger.info(f"All browsers will be force closed after {config.BROWSER_TIMEOUT}s if not finished")
+    
+    try:
+        # Wait for all browsers with timeout
+        results = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=config.BROWSER_TIMEOUT + 10  # Extra 10s buffer
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"⏱️ Overall timeout reached, force closing all bot browsers...")
+        kill_bot_chrome_processes()
+        await asyncio.sleep(2)
+        results = [False] * num_browsers
     
     # Force cleanup after all browsers finish (only bot browsers)
     logger.info("All browsers finished, cleaning up bot processes...")
     kill_bot_chrome_processes()
-    await asyncio.sleep(1)
+    await asyncio.sleep(2)  # Wait for cleanup
+    
+    # Verify all bot browsers are closed
+    remaining = count_bot_chrome_processes()
+    if remaining > 0:
+        logger.warning(f"Still {remaining} bot processes remaining, force killing...")
+        kill_bot_chrome_processes()
+        await asyncio.sleep(1)
+    
+    logger.info("✓ All bot browsers closed, ready for next iteration with fresh browsers")
     
     # Summary
     logger.info("=" * 60)
@@ -218,23 +247,34 @@ async def run_multi_browser_loop() -> None:
         logger.info("=" * 60)
         
         try:
+            # Run multi-browser (will auto-close after timeout)
             await run_multi_browser()
             
             if not config.AUTO_RESTART:
                 logger.info("Auto-restart disabled. Stopping.")
                 break
             
+            # Ensure all bot browsers are closed before next iteration
+            remaining = count_bot_chrome_processes()
+            if remaining > 0:
+                logger.warning(f"Found {remaining} bot browsers still running, force closing...")
+                kill_bot_chrome_processes()
+                await asyncio.sleep(2)
+            
+            logger.info(f"✓ Ready for next iteration with fresh browsers and different proxies")
             logger.info(f"Waiting {config.RESTART_DELAY}s before next iteration...")
             await asyncio.sleep(config.RESTART_DELAY)
             
         except KeyboardInterrupt:
             logger.info("Multi-browser loop interrupted by user")
             # Clean up only bot Chrome processes
+            logger.info("Cleaning up all bot browsers...")
             kill_bot_chrome_processes()
             break
         except Exception as e:
             logger.error(f"Multi-browser iteration {iteration} error: {e}")
             # Clean up only bot processes on error
+            logger.info("Cleaning up bot browsers after error...")
             kill_bot_chrome_processes()
             logger.info(f"Waiting {config.RESTART_DELAY}s before retry...")
             await asyncio.sleep(config.RESTART_DELAY)
