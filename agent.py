@@ -212,10 +212,20 @@ class AutomationAgent:
                 await asyncio.sleep(config.RESTART_DELAY)
     
     async def cleanup(self) -> None:
-        """Cleanup resources."""
+        """Cleanup resources and clear all browser data."""
         try:
             logger.info("Cleaning up...")
+            
+            # Clear browser data before closing
+            if self.actions:
+                try:
+                    await self.actions.clear_browser_data()
+                except Exception as e:
+                    logger.debug(f"Clear data error: {e}")
+            
+            # Close browser
             await self.browser_controller.close()
+            
             # Add small delay to ensure cleanup completes
             await asyncio.sleep(0.5)
             logger.info("Cleanup complete")

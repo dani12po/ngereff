@@ -338,3 +338,22 @@ class Actions:
         except Exception as e:
             logger.debug(f"Success check error: {e}")
             return False
+
+    async def clear_browser_data(self) -> bool:
+        """Clear browser cache, cookies, and local storage."""
+        try:
+            logger.info("Clearing browser data...")
+            
+            # Clear local storage and session storage via JavaScript
+            await self.page.evaluate("""
+                () => {
+                    localStorage.clear();
+                    sessionStorage.clear();
+                }
+            """)
+            
+            logger.info("✓ Browser data cleared")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to clear browser data: {e}")
+            return False
