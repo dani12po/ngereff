@@ -55,6 +55,7 @@ WAIT_FOR_DOLLAR = 3  # Tunggu untuk melihat dollar amount (seconds)
 # Multi-browser settings
 MAX_CONCURRENT_BROWSERS = 5  # Maksimal browser yang berjalan bersamaan
 USE_MULTI_BROWSER = True  # Set True untuk menjalankan multiple browser
+BROWSER_TIMEOUT = 300  # Timeout per browser dalam detik (5 menit)
 
 # CAPTCHA settings
 CAPTCHA_WAIT_TIMEOUT = 30  # seconds

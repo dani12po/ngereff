@@ -4,7 +4,7 @@ from logger import logger
 import config
 
 async def run_browser_instance(browser_id: int, proxy_config: dict) -> bool:
-    """Run single browser instance with specific proxy."""
+    """Run single browser instance with specific proxy and timeout."""
     try:
         logger.info(f"[Browser {browser_id}] Starting with proxy: {proxy_config.get('server', 'N/A')}")
         
@@ -20,8 +20,16 @@ async def run_browser_instance(browser_id: int, proxy_config: dict) -> bool:
         from browser_controller import BrowserController
         agent.browser_controller = BrowserController()
         
-        # Run the agent
-        success = await agent.run()
+        # Run the agent with timeout
+        try:
+            success = await asyncio.wait_for(
+                agent.run(), 
+                timeout=config.BROWSER_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"[Browser {browser_id}] ⏱️ Timeout after {config.BROWSER_TIMEOUT}s, forcing close...")
+            await agent.cleanup()
+            success = False
         
         # Restore original proxy list
         config.PROXY_LIST = original_proxy_list
@@ -29,7 +37,7 @@ async def run_browser_instance(browser_id: int, proxy_config: dict) -> bool:
         if success:
             logger.info(f"[Browser {browser_id}] ✓ Completed successfully")
         else:
-            logger.warning(f"[Browser {browser_id}] ✗ Failed")
+            logger.warning(f"[Browser {browser_id}] ✗ Failed or timeout")
         
         return success
         
@@ -44,6 +52,7 @@ async def run_multi_browser(num_browsers: int = None) -> None:
     
     logger.info("=" * 60)
     logger.info(f"MULTI-BROWSER MODE: Running {num_browsers} browsers")
+    logger.info(f"Timeout per browser: {config.BROWSER_TIMEOUT}s ({config.BROWSER_TIMEOUT//60} minutes)")
     logger.info("=" * 60)
     
     # Ensure we have enough proxies
@@ -72,7 +81,7 @@ async def run_multi_browser(num_browsers: int = None) -> None:
     
     logger.info(f"Total browsers: {len(results)}")
     logger.info(f"✓ Successful: {success_count}")
-    logger.info(f"✗ Failed: {failed_count}")
+    logger.info(f"✗ Failed/Timeout: {failed_count}")
     logger.info("=" * 60)
 
 async def run_multi_browser_loop() -> None:
