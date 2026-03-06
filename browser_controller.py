@@ -46,6 +46,27 @@ class BrowserController:
         try:
             self.playwright = await async_playwright().start()
             
+            # Randomize user agent for fingerprint variation
+            import random
+            user_agents = [
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            ]
+            selected_ua = random.choice(user_agents)
+            
+            # Randomize viewport for fingerprint variation
+            viewports = [
+                {"width": 1920, "height": 1080},
+                {"width": 1366, "height": 768},
+                {"width": 1536, "height": 864},
+                {"width": 1440, "height": 900},
+                {"width": 1600, "height": 900},
+            ]
+            selected_viewport = random.choice(viewports)
+            
             # Browser launch arguments with cache/data clearing
             browser_args = [
                 "--disable-blink-features=AutomationControlled",
@@ -65,7 +86,8 @@ class BrowserController:
                 "--disable-infobars",
                 "--disable-notifications",
                 "--disable-save-password-bubble",
-                "--incognito"  # Force incognito mode
+                "--incognito",  # Force incognito mode
+                f"--user-agent={selected_ua}",  # Random user agent
             ]
             
             # Add DNS configuration if enabled (simplified approach)
@@ -91,23 +113,66 @@ class BrowserController:
             self.browser = await self.playwright.chromium.launch(**launch_options)
             logger.info("Browser process started")
             
+            # Randomize locale and timezone
+            locales = ["en-US", "en-GB", "id-ID", "es-ES", "fr-FR"]
+            timezones = ["America/New_York", "Europe/London", "Asia/Jakarta", "Europe/Paris", "America/Los_Angeles"]
+            
+            selected_locale = random.choice(locales)
+            selected_timezone = random.choice(timezones)
+            
             # Create browser context with NO storage (temporary session)
             self.context = await self.browser.new_context(
-                viewport=config.VIEWPORT,
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                locale="id-ID",
-                timezone_id="Asia/Jakarta",
+                viewport=selected_viewport,
+                user_agent=selected_ua,
+                locale=selected_locale,
+                timezone_id=selected_timezone,
                 # Disable storage to ensure clean session
                 accept_downloads=False,
                 ignore_https_errors=True,
                 # No persistent storage
-                storage_state=None
+                storage_state=None,
+                # Randomize permissions
+                permissions=[],
             )
+            
+            # Add script to mask automation
+            await self.context.add_init_script("""
+                // Mask webdriver
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+                
+                // Randomize canvas fingerprint
+                const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+                HTMLCanvasElement.prototype.toDataURL = function(type) {
+                    const shift = Math.floor(Math.random() * 10) - 5;
+                    const context = this.getContext('2d');
+                    const imageData = context.getImageData(0, 0, this.width, this.height);
+                    for (let i = 0; i < imageData.data.length; i += 4) {
+                        imageData.data[i] = imageData.data[i] + shift;
+                    }
+                    context.putImageData(imageData, 0, 0);
+                    return originalToDataURL.apply(this, arguments);
+                };
+                
+                // Randomize WebGL fingerprint
+                const getParameter = WebGLRenderingContext.prototype.getParameter;
+                WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                    if (parameter === 37445) {
+                        return 'Intel Inc.';
+                    }
+                    if (parameter === 37446) {
+                        return 'Intel Iris OpenGL Engine';
+                    }
+                    return getParameter.apply(this, arguments);
+                };
+            """)
             
             self.page = await self.context.new_page()
             self.page.set_default_timeout(config.TIMEOUT)
             
-            logger.info("Browser launched successfully (temporary profile)")
+            logger.info(f"Browser launched successfully (temporary profile, randomized fingerprint)")
+            logger.info(f"Viewport: {selected_viewport['width']}x{selected_viewport['height']}, Locale: {selected_locale}, TZ: {selected_timezone}")
             return self.page
             
         except Exception as e:

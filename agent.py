@@ -14,6 +14,7 @@ class AutomationAgent:
         self.browser_controller = BrowserController()
         self.actions: Optional[Actions] = None
         self.url = self._build_url()
+        self.click_success = False  # Track if clicks were successful
     
     def _build_url(self) -> str:
         """Build URL with optional referral parameters."""
@@ -94,12 +95,73 @@ class AutomationAgent:
             # Additional wait for page stability
             await asyncio.sleep(1)
             
-            # Auto-click Nano button 100x using selector
-            logger.info(f"Starting auto-click Nano button: {config.CLICK_COUNT} times")
+            # Auto-click Nano button with human-like timing and batch rest
+            logger.info(f"Starting auto-click Nano button: {config.CLICK_COUNT} times (or until no more green notifications)")
+            logger.info(f"Initial delays: {config.CLICK_DELAY_MIN}s - {config.CLICK_DELAY_MAX}s")
+            logger.info(f"Fast delays (after success): {config.CLICK_DELAY_FAST_MIN}s - {config.CLICK_DELAY_FAST_MAX}s")
+            logger.info(f"Batch clicking: {config.CLICK_BATCH_SIZE} clicks → {config.CLICK_BATCH_REST}s rest")
             logger.info("Waiting for Nano button to be ready...")
             await asyncio.sleep(1)
             
+            import random
+            rate_limit_pause = 0
+            success_detected = False
+            fast_mode = False
+            consecutive_no_success = 0  # Track consecutive clicks without success notification
+            captcha_retry_count = 0  # Track CAPTCHA retries
+            
             for i in range(config.CLICK_COUNT):
+                # Check if CAPTCHA is required
+                if i > 0 and i % config.CLICK_CHECK_INTERVAL == 0:
+                    needs_captcha = await self.actions.check_captcha_required()
+                    if needs_captcha:
+                        logger.warning("⚠️ CAPTCHA required during clicking, attempting to solve...")
+                        captcha_retry_count += 1
+                        
+                        # Click CAPTCHA checkbox
+                        await self.actions.click_captcha_checkbox(
+                            config.CAPTCHA_CHECKBOX_POSITION[0],
+                            config.CAPTCHA_CHECKBOX_POSITION[1]
+                        )
+                        await asyncio.sleep(2)
+                        
+                        # Check if still successful after CAPTCHA
+                        has_success_after_captcha = await self.actions.check_click_success()
+                        if not has_success_after_captcha:
+                            logger.error("⚠️ No green notification after CAPTCHA, browser will close")
+                            await self._take_screenshot("captcha_no_success")
+                            return False
+                        else:
+                            logger.info("✓ CAPTCHA solved, green notifications still appearing")
+                            captcha_retry_count = 0  # Reset counter
+                        
+                        # If CAPTCHA appears too many times, close browser
+                        if captcha_retry_count > 3:
+                            logger.error("⚠️ CAPTCHA appeared too many times (>3), closing browser")
+                            await self._take_screenshot("captcha_too_many")
+                            return False
+                
+                # Check if browser should be closed (rate limited without success)
+                if i > 0 and i % config.CLICK_CHECK_INTERVAL == 0:
+                    should_close = await self.actions.should_close_browser()
+                    if should_close:
+                        logger.error("⚠️ Browser needs referral (rate limited without success), closing immediately...")
+                        await self._take_screenshot("needs_referral")
+                        return False  # Return False to indicate failure
+                
+                # Check for rate limit message every 5 clicks (only if not in fast mode)
+                if not fast_mode and i > 0 and i % config.CLICK_CHECK_INTERVAL == 0:
+                    is_rate_limited = await self.actions.check_rate_limit_message()
+                    if is_rate_limited:
+                        logger.warning(f"⚠️ Rate limit detected at click {i+1}, pausing for 5 seconds...")
+                        await asyncio.sleep(5)
+                        rate_limit_pause += 1
+                        
+                        # If rate limited multiple times, increase pause
+                        if rate_limit_pause > 2:
+                            logger.warning(f"⚠️ Rate limited {rate_limit_pause} times, pausing for 10 seconds...")
+                            await asyncio.sleep(10)
+                
                 # Try to click using selector (SVG element)
                 clicked = await self.actions.click_nano_button_by_selector()
                 
@@ -111,12 +173,58 @@ class AutomationAgent:
                         config.NANO_BUTTON_POSITION[1]
                     )
                 
-                if (i + 1) % 10 == 0:  # Log every 10 clicks
-                    logger.info(f"Progress: {i+1}/{config.CLICK_COUNT} clicks on Nano button")
+                # Check if click was successful (green checkmark + dollar)
+                if i == 0 or (i + 1) % config.CLICK_CHECK_INTERVAL == 0:  # Check every X clicks
+                    has_success = await self.actions.check_click_success()
+                    
+                    if has_success:
+                        consecutive_no_success = 0  # Reset counter
+                        if not success_detected:
+                            success_detected = True
+                            fast_mode = True
+                            logger.info("✓✓✓ Click success confirmed! Switching to FAST MODE (100ms clicks)")
+                            logger.info("Browser will continue until green notifications stop appearing")
+                        else:
+                            logger.debug(f"Still getting green notifications at click {i+1}")
+                    else:
+                        if success_detected:
+                            # Was successful before, but now no notification
+                            consecutive_no_success += 1
+                            logger.info(f"No green notification detected ({consecutive_no_success}x)")
+                            
+                            # If no success for 3 consecutive checks (15 clicks), stop
+                            if consecutive_no_success >= 3:
+                                logger.info("✓ No more green notifications detected for 3 checks, stopping clicks")
+                                logger.info(f"Total clicks completed: {i+1}")
+                                break
                 
-                await asyncio.sleep(config.CLICK_DELAY)
+                if (i + 1) % 10 == 0:  # Log every 10 clicks
+                    mode_text = "FAST MODE" if fast_mode else "NORMAL MODE"
+                    logger.info(f"Progress: {i+1}/{config.CLICK_COUNT} clicks [{mode_text}]")
+                
+                # Use random delay - FAST if success detected, SLOW if not
+                if config.CLICK_DELAY_RANDOM:
+                    if fast_mode:
+                        # Fast mode: 80-120ms
+                        delay = random.uniform(config.CLICK_DELAY_FAST_MIN, config.CLICK_DELAY_FAST_MAX)
+                    else:
+                        # Normal mode: 250-500ms
+                        delay = random.uniform(config.CLICK_DELAY_MIN, config.CLICK_DELAY_MAX)
+                else:
+                    delay = config.CLICK_DELAY
+                
+                await asyncio.sleep(delay)
+                
+                # Batch rest: After every CLICK_BATCH_SIZE clicks, rest for CLICK_BATCH_REST seconds
+                # Skip batch rest in fast mode
+                if not fast_mode and (i + 1) % config.CLICK_BATCH_SIZE == 0 and (i + 1) < config.CLICK_COUNT:
+                    logger.info(f"Batch rest after {i+1} clicks, pausing for {config.CLICK_BATCH_REST}s...")
+                    await asyncio.sleep(config.CLICK_BATCH_REST)
             
             logger.info("Auto-click Nano button completed")
+            
+            # Store success status for timeout handling
+            self.click_success = success_detected
             
             # Wait to see the dollar amount
             logger.info(f"Waiting {config.WAIT_FOR_DOLLAR}s to see dollar amount...")

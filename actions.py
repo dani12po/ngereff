@@ -338,6 +338,159 @@ class Actions:
         except Exception as e:
             logger.debug(f"Success check error: {e}")
             return False
+    
+    async def check_captcha_required(self) -> bool:
+        """Check if CAPTCHA is required to continue."""
+        try:
+            captcha_selectors = [
+                'text=Please complete the captcha below to continue',
+                'text=complete the captcha',
+                '//*[contains(text(), "complete the captcha")]',
+                '//*[contains(text(), "captcha below")]'
+            ]
+            
+            for selector in captcha_selectors:
+                try:
+                    element = await self.page.wait_for_selector(
+                        selector, 
+                        timeout=500, 
+                        state="visible"
+                    )
+                    if element:
+                        logger.warning("⚠️ CAPTCHA required to continue!")
+                        return True
+                except Exception:
+                    continue
+            
+            return False
+        except Exception as e:
+            logger.debug(f"CAPTCHA check error: {e}")
+            return False
+    
+    async def check_click_success(self) -> bool:
+        """Check if click was successful (green checkmark detected)."""
+        try:
+            # Method 1: Check for dollar amount increase notification (most reliable)
+            try:
+                # Look for text containing "+$" which indicates earning
+                page_text = await self.page.text_content('body')
+                if page_text and '+$' in page_text:
+                    logger.info("✓ Click success detected (dollar increase +$)!")
+                    return True
+            except Exception as e:
+                logger.debug(f"Dollar check error: {e}")
+            
+            # Method 2: Check for green checkmark SVG (any green color)
+            success_indicators = [
+                # Any SVG with green color
+                'svg[style*="rgb(34, 197, 94)"]',
+                'svg[style*="rgb(22, 163, 74)"]',
+                'svg[style*="rgb(16, 185, 129)"]',
+                'svg path[fill*="rgb(34, 197, 94)"]',
+                'svg path[fill*="rgb(22, 163, 74)"]',
+                'svg path[fill*="rgb(16, 185, 129)"]',
+                'svg circle[fill*="rgb(34, 197, 94)"]',
+                'svg circle[fill*="rgb(22, 163, 74)"]',
+                'svg circle[fill*="rgb(16, 185, 129)"]',
+                # Hex colors
+                'svg path[fill*="#22c55e"]',
+                'svg path[fill*="#16a34a"]',
+                'svg path[fill*="#10b981"]',
+                # Class-based
+                'svg[class*="text-green"]',
+                '[class*="text-green"] svg',
+                'svg[class*="success"]',
+                '[class*="success"] svg',
+            ]
+            
+            for selector in success_indicators:
+                try:
+                    element = await self.page.wait_for_selector(
+                        selector, 
+                        timeout=300, 
+                        state="visible"
+                    )
+                    if element:
+                        logger.info(f"✓ Click success detected (green checkmark via {selector})!")
+                        return True
+                except Exception:
+                    continue
+            
+            logger.debug("No success indicators found")
+            return False
+        except Exception as e:
+            logger.debug(f"Click success check error: {e}")
+            return False
+    
+    async def check_rate_limit_message(self) -> bool:
+        """Check if rate limit message is visible WITHOUT green checkmark."""
+        try:
+            # First check if there's a green checkmark (success)
+            has_success = await self.check_click_success()
+            if has_success:
+                # If there's green checkmark, ignore rate limit message
+                logger.debug("Rate limit message ignored (click is successful)")
+                return False
+            
+            # Check for rate limit text only if no success detected
+            rate_limit_selectors = [
+                'text=Please wait a moment before clicking again',
+                'text=Please wait',
+                'text=Invite friends to earn more',
+                '//*[contains(text(), "Please wait")]',
+                '//*[contains(text(), "wait a moment")]',
+                '//*[contains(text(), "Invite friends")]'
+            ]
+            
+            for selector in rate_limit_selectors:
+                try:
+                    element = await self.page.wait_for_selector(
+                        selector, 
+                        timeout=500, 
+                        state="visible"
+                    )
+                    if element:
+                        logger.warning("⚠️ Rate limit message detected WITHOUT success!")
+                        return True
+                except Exception:
+                    continue
+            
+            logger.debug("No rate limit message found")
+            return False
+        except Exception as e:
+            logger.debug(f"Rate limit check error: {e}")
+            return False
+    
+    async def should_close_browser(self) -> bool:
+        """Check if browser should be closed (rate limited without success)."""
+        try:
+            logger.info("Checking if browser should close...")
+            
+            # Check if rate limited
+            is_rate_limited = await self.check_rate_limit_message()
+            
+            if is_rate_limited:
+                # Double check - wait 2 seconds and check again
+                logger.info("⚠️ Rate limit detected, double checking in 2 seconds...")
+                await asyncio.sleep(2)
+                
+                # Check if success appeared
+                has_success = await self.check_click_success()
+                if has_success:
+                    logger.info("✓ Success detected after rate limit, continuing...")
+                    return False
+                
+                # Still rate limited without success
+                is_still_rate_limited = await self.check_rate_limit_message()
+                if is_still_rate_limited:
+                    logger.warning("⚠️ Rate limited without success - browser should close (needs referral)")
+                    return True
+            
+            logger.debug("Browser should continue (no rate limit or has success)")
+            return False
+        except Exception as e:
+            logger.debug(f"Should close check error: {e}")
+            return False
 
     async def clear_browser_data(self) -> bool:
         """Clear browser cache, cookies, and local storage."""

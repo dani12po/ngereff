@@ -27,6 +27,7 @@ PROXY_PASSWORD = ""
 # Proxy rotation (untuk variasi IP)
 USE_PROXY_ROTATION = True  # Set True untuk rotasi proxy
 PROXY_LIST = [
+    # Webshare.io proxies (10 proxies)
     {"server": "http://p.webshare.io:80", "username": "wpsvwswv-1", "password": "nqf6slu7ws2l"},
     {"server": "http://p.webshare.io:80", "username": "wpsvwswv-2", "password": "nqf6slu7ws2l"},
     {"server": "http://p.webshare.io:80", "username": "wpsvwswv-3", "password": "nqf6slu7ws2l"},
@@ -37,6 +38,18 @@ PROXY_LIST = [
     {"server": "http://p.webshare.io:80", "username": "wpsvwswv-8", "password": "nqf6slu7ws2l"},
     {"server": "http://p.webshare.io:80", "username": "wpsvwswv-9", "password": "nqf6slu7ws2l"},
     {"server": "http://p.webshare.io:80", "username": "wpsvwswv-10", "password": "nqf6slu7ws2l"},
+    
+    # Backup proxies (10 proxies)
+    {"server": "http://31.59.20.176:6754", "username": "uarfrzyh", "password": "w1csugrzhvlh"},
+    {"server": "http://23.95.150.145:6114", "username": "uarfrzyh", "password": "w1csugrzhvlh"},
+    {"server": "http://198.23.239.134:6540", "username": "uarfrzyh", "password": "w1csugrzhvlh"},
+    {"server": "http://45.38.107.97:6014", "username": "uarfrzyh", "password": "w1csugrzhvlh"},
+    {"server": "http://107.172.163.27:6543", "username": "uarfrzyh", "password": "w1csugrzhvlh"},
+    {"server": "http://198.105.121.200:6462", "username": "uarfrzyh", "password": "w1csugrzhvlh"},
+    {"server": "http://64.137.96.74:6641", "username": "uarfrzyh", "password": "w1csugrzhvlh"},
+    {"server": "http://216.10.27.159:6837", "username": "uarfrzyh", "password": "w1csugrzhvlh"},
+    {"server": "http://142.111.67.146:5611", "username": "uarfrzyh", "password": "w1csugrzhvlh"},
+    {"server": "http://194.39.32.164:6461", "username": "uarfrzyh", "password": "w1csugrzhvlh"},
 ]
 
 # Retry settings
@@ -44,18 +57,28 @@ MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds
 
 # Screenshot settings
-SCREENSHOT_ON_ERROR = True
+SCREENSHOT_ON_ERROR = False  # Disable screenshot untuk hemat disk space
 SCREENSHOT_DIR = "screenshots"
 
 # Click settings
-CLICK_COUNT = 50  # Jumlah klik pada button Nano
-CLICK_DELAY = 0.05  # Delay antar klik (50ms - lebih lambat agar lebih reliable)
+CLICK_COUNT = 200  # Jumlah klik pada button Nano (dinaikkan karena akan terus klik sampai tidak ada notif)
+CLICK_DELAY = 0.35  # Delay antar klik (350ms) - default sebelum terdeteksi sukses
+CLICK_DELAY_RANDOM = True  # Randomize delay untuk lebih natural
+CLICK_DELAY_MIN = 0.25  # Minimum delay (250ms) - lebih lambat untuk avoid detection
+CLICK_DELAY_MAX = 0.5  # Maximum delay (500ms) - lebih lambat untuk avoid detection
+CLICK_DELAY_FAST_MIN = 0.08  # Fast delay setelah terdeteksi sukses (80ms)
+CLICK_DELAY_FAST_MAX = 0.12  # Fast delay setelah terdeteksi sukses (120ms)
+CLICK_BATCH_SIZE = 10  # Jumlah klik per batch sebelum istirahat
+CLICK_BATCH_REST = 2  # Istirahat antar batch (seconds)
+CLICK_CHECK_INTERVAL = 5  # Cek notif hijau setiap X klik
 WAIT_FOR_DOLLAR = 3  # Tunggu untuk melihat dollar amount (seconds)
 
 # Multi-browser settings
 MAX_CONCURRENT_BROWSERS = 5  # Maksimal browser yang berjalan bersamaan
 USE_MULTI_BROWSER = True  # Set True untuk menjalankan multiple browser
-BROWSER_TIMEOUT = 300  # Timeout per browser dalam detik (5 menit)
+BROWSER_TIMEOUT = 300  # Timeout per browser dalam detik (5 menit) - diabaikan jika klik sukses
+BROWSER_LAUNCH_DELAY = 10  # Delay antar launch browser (detik) untuk avoid rate limit
+IGNORE_TIMEOUT_ON_SUCCESS = True  # Abaikan timeout jika klik berhasil (hijau terdeteksi)
 
 # CAPTCHA settings
 CAPTCHA_WAIT_TIMEOUT = 30  # seconds
