@@ -93,5 +93,11 @@ SKIP_SUCCESS_CHECK = True  # Skip pengecekan success message biar lebih cepat
 AUTO_RESTART = True  # Restart otomatis setelah selesai
 RESTART_DELAY = 3  # Delay sebelum restart (seconds) - diperlambat untuk stability
 
+# Nano withdrawal settings
+NANO_ADDRESS = ""  # Alamat Nano untuk withdraw (isi dengan alamat kamu)
+AUTO_WITHDRAW = False  # Set True untuk auto-withdraw
+WITHDRAW_THRESHOLD = 0.00001  # Minimum balance untuk withdraw (0.00001 Nano)
+CHECK_BALANCE_INTERVAL = 50  # Cek balance setiap X klik
+
 # Nano button position (fallback jika selector gagal)
 NANO_BUTTON_POSITION = (350, 430)

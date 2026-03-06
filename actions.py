@@ -339,6 +339,84 @@ class Actions:
             logger.debug(f"Success check error: {e}")
             return False
     
+    async def get_session_token(self) -> Optional[str]:
+        """Extract session token from browser."""
+        try:
+            # Try localStorage first
+            token = await self.page.evaluate("""
+                () => {
+                    return localStorage.getItem('token') || 
+                           sessionStorage.getItem('token') || 
+                           null;
+                }
+            """)
+            
+            if token:
+                logger.info(f"Session token extracted: {token[:20]}...")
+                return token
+            
+            # Try cookies
+            cookies = await self.page.context.cookies()
+            for cookie in cookies:
+                if 'token' in cookie['name'].lower():
+                    logger.info(f"Session token from cookie: {cookie['value'][:20]}...")
+                    return cookie['value']
+            
+            logger.warning("Session token not found")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to extract session token: {e}")
+            return None
+    
+    async def check_session_balance(self, token: str) -> Optional[dict]:
+        """Check session balance via API."""
+        try:
+            import aiohttp
+            
+            url = f"https://api.thenanobutton.com/api/session?token={token}"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        logger.info(f"Balance: {data.get('currentNano', 0)} Nano")
+                        logger.info(f"Total earned: {data.get('totalEarned', 0)}")
+                        logger.info(f"Clicks: {data.get('clicks', 0)}")
+                        return data
+                    else:
+                        logger.warning(f"Session API returned status {response.status}")
+                        return None
+                        
+        except Exception as e:
+            logger.error(f"Failed to check session balance: {e}")
+            return None
+    
+    async def withdraw_nano(self, token: str, address: str) -> bool:
+        """Withdraw Nano to address."""
+        try:
+            import aiohttp
+            
+            url = "https://api.thenanobutton.com/api/withdraw"
+            payload = {
+                "token": token,
+                "address": address
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        logger.info(f"✓ Withdraw successful! TX: {data}")
+                        return True
+                    else:
+                        logger.warning(f"Withdraw failed with status {response.status}")
+                        return False
+                        
+        except Exception as e:
+            logger.error(f"Failed to withdraw: {e}")
+            return False
+    
     async def check_captcha_required(self) -> bool:
         """Check if CAPTCHA is required to continue."""
         try:
@@ -471,29 +549,14 @@ class Actions:
     async def should_close_browser(self) -> bool:
         """Check if browser should be closed (rate limited without success)."""
         try:
-            logger.info("Checking if browser should close...")
-            
-            # Check if rate limited
+            # Check if rate limited (quick check, no waiting)
             is_rate_limited = await self.check_rate_limit_message()
             
             if is_rate_limited:
-                # Double check - wait 2 seconds and check again
-                logger.info("⚠️ Rate limit detected, double checking in 2 seconds...")
-                await asyncio.sleep(2)
-                
-                # Check if success appeared
-                has_success = await self.check_click_success()
-                if has_success:
-                    logger.info("✓ Success detected after rate limit, continuing...")
-                    return False
-                
-                # Still rate limited without success
-                is_still_rate_limited = await self.check_rate_limit_message()
-                if is_still_rate_limited:
-                    logger.warning("⚠️ Rate limited without success - browser should close (needs referral)")
-                    return True
+                # Rate limited without success - close immediately
+                logger.error("⚠️⚠️⚠️ RATE LIMITED WITHOUT SUCCESS - BROWSER MUST CLOSE ⚠️⚠️⚠️")
+                return True
             
-            logger.debug("Browser should continue (no rate limit or has success)")
             return False
         except Exception as e:
             logger.debug(f"Should close check error: {e}")

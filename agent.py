@@ -15,6 +15,7 @@ class AutomationAgent:
         self.actions: Optional[Actions] = None
         self.url = self._build_url()
         self.click_success = False  # Track if clicks were successful
+        self.session_token: Optional[str] = None  # Track session token
     
     def _build_url(self) -> str:
         """Build URL with optional referral parameters."""
@@ -95,6 +96,20 @@ class AutomationAgent:
             # Additional wait for page stability
             await asyncio.sleep(1)
             
+            # Extract session token
+            logger.info("Extracting session token...")
+            session_token = await self.actions.get_session_token()
+            self.session_token = session_token  # Store in instance
+            if session_token:
+                logger.info(f"✓ Session token: {session_token[:30]}...")
+                
+                # Check initial balance
+                session_data = await self.actions.check_session_balance(session_token)
+                if session_data:
+                    logger.info(f"Initial balance: {session_data.get('currentNano', 0)} Nano")
+            else:
+                logger.warning("Could not extract session token, continuing without balance tracking")
+            
             # Auto-click Nano button with human-like timing and batch rest
             logger.info(f"Starting auto-click Nano button: {config.CLICK_COUNT} times (or until no more green notifications)")
             logger.info(f"Initial delays: {config.CLICK_DELAY_MIN}s - {config.CLICK_DELAY_MAX}s")
@@ -111,6 +126,24 @@ class AutomationAgent:
             captcha_retry_count = 0  # Track CAPTCHA retries
             
             for i in range(config.CLICK_COUNT):
+                # Check balance periodically
+                if session_token and config.AUTO_WITHDRAW and i > 0 and i % config.CHECK_BALANCE_INTERVAL == 0:
+                    logger.info(f"Checking balance after {i} clicks...")
+                    session_data = await self.actions.check_session_balance(session_token)
+                    
+                    if session_data:
+                        current_balance = session_data.get('currentNano', 0)
+                        logger.info(f"Current balance: {current_balance} Nano")
+                        
+                        # Auto-withdraw if threshold reached
+                        if current_balance >= config.WITHDRAW_THRESHOLD and config.NANO_ADDRESS:
+                            logger.info(f"Balance {current_balance} >= {config.WITHDRAW_THRESHOLD}, attempting withdraw...")
+                            withdraw_success = await self.actions.withdraw_nano(session_token, config.NANO_ADDRESS)
+                            if withdraw_success:
+                                logger.info("✓ Withdraw completed, continuing clicks...")
+                            else:
+                                logger.warning("Withdraw failed, continuing clicks...")
+                
                 # PRIORITY 1: Check if browser should be closed (rate limited without success)
                 # Check EVERY click for faster detection
                 if i > 0:
@@ -225,6 +258,33 @@ class AutomationAgent:
                     await asyncio.sleep(config.CLICK_BATCH_REST)
             
             logger.info("Auto-click Nano button completed")
+            
+            # Final balance check before closing
+            if session_token:
+                logger.info("Checking final balance...")
+                session_data = await self.actions.check_session_balance(session_token)
+                
+                if session_data:
+                    final_balance = session_data.get('currentNano', 0)
+                    total_earned = session_data.get('totalEarned', 0)
+                    total_clicks = session_data.get('clicks', 0)
+                    
+                    logger.info("=" * 60)
+                    logger.info("FINAL SESSION STATS")
+                    logger.info("=" * 60)
+                    logger.info(f"Final balance: {final_balance} Nano")
+                    logger.info(f"Total earned: {total_earned}")
+                    logger.info(f"Total clicks: {total_clicks}")
+                    logger.info("=" * 60)
+                    
+                    # Auto-withdraw remaining balance if enabled
+                    if config.AUTO_WITHDRAW and final_balance >= config.WITHDRAW_THRESHOLD and config.NANO_ADDRESS:
+                        logger.info(f"Final withdraw: {final_balance} Nano...")
+                        withdraw_success = await self.actions.withdraw_nano(session_token, config.NANO_ADDRESS)
+                        if withdraw_success:
+                            logger.info("✓ Final withdraw completed")
+                        else:
+                            logger.warning("Final withdraw failed")
             
             # Store success status for timeout handling
             self.click_success = success_detected
