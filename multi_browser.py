@@ -147,6 +147,9 @@ async def run_multi_browser(num_browsers: int = None) -> None:
     if num_browsers is None:
         num_browsers = min(config.MAX_CONCURRENT_BROWSERS, len(config.PROXY_LIST))
     
+    # Limit to max configured browsers
+    num_browsers = min(num_browsers, config.MAX_CONCURRENT_BROWSERS, len(config.PROXY_LIST))
+    
     # Clean up any leftover Chrome processes before starting
     chrome_count = count_chrome_processes()
     if chrome_count > 0:
