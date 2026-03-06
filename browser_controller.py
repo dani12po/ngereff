@@ -137,40 +137,80 @@ class BrowserController:
             if self.context:
                 try:
                     logger.debug("Clearing cookies and storage...")
-                    await self.context.clear_cookies()
-                    await self.context.clear_permissions()
+                    await asyncio.wait_for(
+                        self.context.clear_cookies(),
+                        timeout=5
+                    )
+                    await asyncio.wait_for(
+                        self.context.clear_permissions(),
+                        timeout=5
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("Clear storage timeout, forcing close...")
                 except Exception as e:
                     logger.debug(f"Clear storage error: {e}")
             
-            # Close page
+            # Close page with timeout
             if self.page:
                 try:
-                    await self.page.close()
+                    await asyncio.wait_for(
+                        self.page.close(),
+                        timeout=5
+                    )
                     logger.debug("Page closed")
+                except asyncio.TimeoutError:
+                    logger.warning("Page close timeout, forcing...")
                 except Exception as e:
                     logger.debug(f"Page close error: {e}")
             
-            # Close context (this removes all session data)
+            # Close context with timeout (this removes all session data)
             if self.context:
                 try:
-                    await self.context.close()
+                    await asyncio.wait_for(
+                        self.context.close(),
+                        timeout=5
+                    )
                     logger.debug("Context closed (all data cleared)")
+                except asyncio.TimeoutError:
+                    logger.warning("Context close timeout, forcing...")
                 except Exception as e:
                     logger.debug(f"Context close error: {e}")
             
-            # Close browser
+            # Close browser with timeout
             if self.browser:
                 try:
-                    await self.browser.close()
+                    await asyncio.wait_for(
+                        self.browser.close(),
+                        timeout=10
+                    )
                     logger.debug("Browser closed")
+                except asyncio.TimeoutError:
+                    logger.warning("Browser close timeout, force killing process...")
+                    # Force kill browser process if timeout
+                    try:
+                        import psutil
+                        import os
+                        current_process = psutil.Process(os.getpid())
+                        children = current_process.children(recursive=True)
+                        for child in children:
+                            if 'chrome' in child.name().lower() or 'chromium' in child.name().lower():
+                                logger.warning(f"Force killing browser process: {child.pid}")
+                                child.kill()
+                    except Exception as kill_error:
+                        logger.debug(f"Force kill error: {kill_error}")
                 except Exception as e:
                     logger.debug(f"Browser close error: {e}")
             
-            # Stop playwright
+            # Stop playwright with timeout
             if self.playwright:
                 try:
-                    await self.playwright.stop()
+                    await asyncio.wait_for(
+                        self.playwright.stop(),
+                        timeout=5
+                    )
                     logger.debug("Playwright stopped")
+                except asyncio.TimeoutError:
+                    logger.warning("Playwright stop timeout")
                 except Exception as e:
                     logger.debug(f"Playwright stop error: {e}")
             

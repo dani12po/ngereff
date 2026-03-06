@@ -3,16 +3,28 @@ from agent import AutomationAgent
 from logger import logger
 import config
 
+# Track stuck browsers
+stuck_browser_count = {}
+
 async def run_browser_instance(browser_id: int, proxy_config: dict) -> bool:
     """Run single browser instance with specific proxy and timeout."""
+    global stuck_browser_count
+    
     try:
         logger.info(f"[Browser {browser_id}] Starting with proxy: {proxy_config.get('server', 'N/A')}")
+        
+        # Check if this browser has been stuck before
+        if browser_id in stuck_browser_count:
+            if stuck_browser_count[browser_id] >= 2:
+                logger.warning(f"[Browser {browser_id}] ⚠️ Stuck 2x before, skipping this round...")
+                # Reset counter and skip
+                stuck_browser_count[browser_id] = 0
+                return False
         
         # Create agent instance
         agent = AutomationAgent()
         
         # Override proxy for this specific browser BEFORE launching
-        # We need to set it before browser_controller is used
         original_proxy_list = config.PROXY_LIST
         config.PROXY_LIST = [proxy_config]  # Set only this proxy
         
@@ -26,9 +38,36 @@ async def run_browser_instance(browser_id: int, proxy_config: dict) -> bool:
                 agent.run(), 
                 timeout=config.BROWSER_TIMEOUT
             )
+            # Reset stuck counter on success
+            if browser_id in stuck_browser_count:
+                stuck_browser_count[browser_id] = 0
         except asyncio.TimeoutError:
             logger.warning(f"[Browser {browser_id}] ⏱️ Timeout after {config.BROWSER_TIMEOUT}s, forcing close...")
-            await agent.cleanup()
+            
+            # Increment stuck counter
+            if browser_id not in stuck_browser_count:
+                stuck_browser_count[browser_id] = 0
+            stuck_browser_count[browser_id] += 1
+            logger.warning(f"[Browser {browser_id}] Stuck count: {stuck_browser_count[browser_id]}/2")
+            
+            # Force cleanup
+            try:
+                await asyncio.wait_for(agent.cleanup(), timeout=10)
+            except asyncio.TimeoutError:
+                logger.error(f"[Browser {browser_id}] Cleanup timeout, force killing...")
+                # Force kill all chrome processes
+                try:
+                    import psutil
+                    for proc in psutil.process_iter(['pid', 'name']):
+                        if 'chrome' in proc.info['name'].lower() or 'chromium' in proc.info['name'].lower():
+                            try:
+                                proc.kill()
+                                logger.warning(f"Force killed process: {proc.info['pid']}")
+                            except:
+                                pass
+                except Exception as e:
+                    logger.error(f"Force kill error: {e}")
+            
             success = False
         
         # Restore original proxy list
@@ -43,6 +82,10 @@ async def run_browser_instance(browser_id: int, proxy_config: dict) -> bool:
         
     except Exception as e:
         logger.error(f"[Browser {browser_id}] Error: {e}")
+        # Increment stuck counter on error
+        if browser_id not in stuck_browser_count:
+            stuck_browser_count[browser_id] = 0
+        stuck_browser_count[browser_id] += 1
         return False
 
 async def run_multi_browser(num_browsers: int = None) -> None:
