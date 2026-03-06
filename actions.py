@@ -425,23 +425,17 @@ class Actions:
     async def check_rate_limit_message(self) -> bool:
         """Check if rate limit message is visible WITHOUT green checkmark."""
         try:
-            # First check if there's a green checkmark (success)
-            has_success = await self.check_click_success()
-            if has_success:
-                # If there's green checkmark, ignore rate limit message
-                logger.debug("Rate limit message ignored (click is successful)")
-                return False
-            
-            # Check for rate limit text only if no success detected
+            # Check for rate limit text FIRST (before checking success)
             rate_limit_selectors = [
                 'text=Please wait a moment before clicking again',
-                'text=Please wait',
                 'text=Invite friends to earn more',
-                '//*[contains(text(), "Please wait")]',
-                '//*[contains(text(), "wait a moment")]',
-                '//*[contains(text(), "Invite friends")]'
+                'text=Please wait',
+                '//*[contains(text(), "Please wait a moment")]',
+                '//*[contains(text(), "wait a moment before clicking")]',
+                '//*[contains(text(), "Invite friends to earn more")]'
             ]
             
+            rate_limit_found = False
             for selector in rate_limit_selectors:
                 try:
                     element = await self.page.wait_for_selector(
@@ -450,13 +444,26 @@ class Actions:
                         state="visible"
                     )
                     if element:
-                        logger.warning("⚠️ Rate limit message detected WITHOUT success!")
-                        return True
+                        rate_limit_found = True
+                        logger.warning(f"⚠️ Rate limit message detected: {selector}")
+                        break
                 except Exception:
                     continue
             
-            logger.debug("No rate limit message found")
-            return False
+            if not rate_limit_found:
+                return False
+            
+            # Rate limit message found, now check if there's also a green checkmark
+            has_success = await self.check_click_success()
+            if has_success:
+                # If there's green checkmark, ignore rate limit message
+                logger.info("Rate limit message found BUT click is successful (green), continuing...")
+                return False
+            
+            # Rate limit WITHOUT success
+            logger.error("⚠️ Rate limit message WITHOUT green checkmark - browser needs referral!")
+            return True
+            
         except Exception as e:
             logger.debug(f"Rate limit check error: {e}")
             return False

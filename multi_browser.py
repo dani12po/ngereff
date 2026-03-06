@@ -110,6 +110,8 @@ async def run_browser_instance(browser_id: int, proxy_config: dict) -> bool:
     """Run single browser instance with specific proxy and conditional timeout."""
     global stuck_browser_count
     
+    agent = None
+    
     try:
         # Ensure we don't exceed max browsers before starting
         await ensure_max_browsers(config.MAX_CONCURRENT_BROWSERS)
@@ -138,17 +140,11 @@ async def run_browser_instance(browser_id: int, proxy_config: dict) -> bool:
         # Run the agent WITHOUT timeout (will stop when no more green notifications)
         try:
             # Start the agent run
-            agent_task = asyncio.create_task(agent.run())
+            success = await agent.run()
             
-            # Register browser processes after launch
+            # Register browser processes IMMEDIATELY after launch
             if agent.browser_controller.browser:
                 register_browser_process(agent.browser_controller.browser)
-            
-            # Wait for agent to complete (no timeout)
-            # Agent will stop automatically when:
-            # 1. No more green notifications (success case)
-            # 2. Rate limited without success (needs referral - will close immediately)
-            success = await agent_task
             
             # Reset stuck counter on success
             if browser_id in stuck_browser_count:
@@ -158,20 +154,14 @@ async def run_browser_instance(browser_id: int, proxy_config: dict) -> bool:
             logger.error(f"[Browser {browser_id}] Error during execution: {e}")
             success = False
         
-        # Cleanup
-        try:
-            await asyncio.wait_for(agent.cleanup(), timeout=5)
-        except asyncio.TimeoutError:
-            logger.error(f"[Browser {browser_id}] Cleanup timeout, force killing bot browsers...")
-            kill_bot_chrome_processes()
-        
         # Restore original proxy list
         config.PROXY_LIST = original_proxy_list
         
         if success:
             logger.info(f"[Browser {browser_id}] ✓ Completed successfully")
         else:
-            logger.warning(f"[Browser {browser_id}] ✗ Failed (needs referral or error)")
+            logger.error(f"[Browser {browser_id}] ✗✗✗ FAILED - Needs referral or error ✗✗✗")
+            logger.error(f"[Browser {browser_id}] This browser will be closed and replaced with a new one")
             # Increment stuck counter on failure
             if browser_id not in stuck_browser_count:
                 stuck_browser_count[browser_id] = 0
@@ -187,6 +177,31 @@ async def run_browser_instance(browser_id: int, proxy_config: dict) -> bool:
         stuck_browser_count[browser_id] += 1
         
         return False
+    
+    finally:
+        # ALWAYS cleanup browser, even on error
+        if agent:
+            try:
+                logger.info(f"[Browser {browser_id}] Cleaning up browser...")
+                await asyncio.wait_for(agent.cleanup(), timeout=5)
+                logger.info(f"[Browser {browser_id}] ✓ Browser cleaned up")
+            except asyncio.TimeoutError:
+                logger.error(f"[Browser {browser_id}] Cleanup timeout, force killing...")
+                # Force kill this browser's processes
+                if agent.browser_controller and agent.browser_controller.browser:
+                    try:
+                        await agent.browser_controller.browser.close()
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.error(f"[Browser {browser_id}] Cleanup error: {e}")
+        
+        # Double check - count processes and warn if too many
+        bot_chrome_count = count_bot_chrome_processes()
+        if bot_chrome_count > config.MAX_CONCURRENT_BROWSERS * 10:
+            logger.warning(f"[Browser {browser_id}] ⚠️ Too many Chrome processes ({bot_chrome_count}), force cleaning...")
+            kill_bot_chrome_processes()
+            await asyncio.sleep(2)
 
 async def run_multi_browser(num_browsers: int = None) -> None:
     """Run multiple browser instances one by one, maintaining max 5 successful browsers."""
@@ -225,6 +240,17 @@ async def run_multi_browser(num_browsers: int = None) -> None:
     failed_count = 0
     
     while True:
+        # Force check and cleanup if too many browsers
+        bot_chrome_count = count_bot_chrome_processes()
+        if bot_chrome_count > num_browsers * 10:
+            logger.warning(f"⚠️ Too many Chrome processes detected ({bot_chrome_count}), force cleaning...")
+            kill_bot_chrome_processes()
+            await asyncio.sleep(3)
+            # Clear active browsers dict
+            active_browsers.clear()
+            logger.info("✓ Forced cleanup complete, restarting browser management...")
+            continue
+        
         # Check how many successful browsers are currently running
         # Remove completed tasks
         completed_ids = []
@@ -246,10 +272,15 @@ async def run_multi_browser(num_browsers: int = None) -> None:
         # Remove completed browsers from active list
         for browser_id in completed_ids:
             del active_browsers[browser_id]
+            logger.info(f"[Browser {browser_id}] Removed from active list - slot available for new browser")
+        
+        # Log current status
+        active_count = len(active_browsers)
+        if active_count > 0 or completed_ids:
+            logger.info(f"📊 Status: {active_count} active, {successful_count} successful, {failed_count} failed")
+            logger.info(f"📊 Total launched: {browser_counter}, Need {num_browsers - active_count} more to reach max")
         
         # Check if we can launch a new browser
-        active_count = len(active_browsers)
-        
         if active_count < num_browsers:
             # Launch a new browser
             browser_counter += 1
@@ -260,7 +291,7 @@ async def run_multi_browser(num_browsers: int = None) -> None:
             
             logger.info("=" * 60)
             logger.info(f"Launching Browser {browser_counter}")
-            logger.info(f"Active successful browsers: {active_count}/{num_browsers}")
+            logger.info(f"Active browsers: {active_count}/{num_browsers}")
             logger.info(f"Using proxy: {proxy['username']} ({proxy['server']})")
             logger.info("=" * 60)
             
@@ -269,16 +300,17 @@ async def run_multi_browser(num_browsers: int = None) -> None:
             active_browsers[browser_counter] = task
             
             # Wait a bit before checking again (to see if browser fails quickly)
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
         else:
             # Max browsers reached, wait for one to complete
-            logger.info(f"Max {num_browsers} successful browsers running, waiting for one to complete...")
+            logger.debug(f"Max {num_browsers} browsers running, waiting for one to complete...")
             
             # Wait for any browser to complete
             if active_browsers:
                 done, pending = await asyncio.wait(
                     active_browsers.values(),
-                    return_when=asyncio.FIRST_COMPLETED
+                    return_when=asyncio.FIRST_COMPLETED,
+                    timeout=10  # Check every 10 seconds
                 )
             else:
                 # No active browsers, continue to launch new one

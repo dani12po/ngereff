@@ -111,7 +111,17 @@ class AutomationAgent:
             captcha_retry_count = 0  # Track CAPTCHA retries
             
             for i in range(config.CLICK_COUNT):
-                # Check if CAPTCHA is required
+                # PRIORITY 1: Check if browser should be closed (rate limited without success)
+                # Check EVERY click for faster detection
+                if i > 0:
+                    should_close = await self.actions.should_close_browser()
+                    if should_close:
+                        logger.error("⚠️⚠️⚠️ BROWSER NEEDS REFERRAL - CLOSING IMMEDIATELY ⚠️⚠️⚠️")
+                        logger.error("Message: 'Please wait a moment before clicking again. Invite friends to earn more'")
+                        await self._take_screenshot("needs_referral")
+                        return False  # Return False to indicate failure - browser will close
+                
+                # PRIORITY 2: Check if CAPTCHA is required
                 if i > 0 and i % config.CLICK_CHECK_INTERVAL == 0:
                     needs_captcha = await self.actions.check_captcha_required()
                     if needs_captcha:
@@ -141,15 +151,8 @@ class AutomationAgent:
                             await self._take_screenshot("captcha_too_many")
                             return False
                 
-                # Check if browser should be closed (rate limited without success)
-                if i > 0 and i % config.CLICK_CHECK_INTERVAL == 0:
-                    should_close = await self.actions.should_close_browser()
-                    if should_close:
-                        logger.error("⚠️ Browser needs referral (rate limited without success), closing immediately...")
-                        await self._take_screenshot("needs_referral")
-                        return False  # Return False to indicate failure
-                
-                # Check for rate limit message every 5 clicks (only if not in fast mode)
+                # PRIORITY 3: Check for rate limit message (only if not in fast mode)
+                # This is redundant with should_close_browser but kept for logging
                 if not fast_mode and i > 0 and i % config.CLICK_CHECK_INTERVAL == 0:
                     is_rate_limited = await self.actions.check_rate_limit_message()
                     if is_rate_limited:
