@@ -2,15 +2,70 @@ import asyncio
 from agent import AutomationAgent
 from logger import logger
 import config
+import psutil
 
 # Track stuck browsers
 stuck_browser_count = {}
 
+# Track active browser processes
+active_browsers = {}
+
+def kill_all_chrome_processes():
+    """Force kill all Chrome/Chromium processes."""
+    killed_count = 0
+    try:
+        for proc in psutil.process_iter(['pid', 'name']):
+            try:
+                proc_name = proc.info['name'].lower()
+                if 'chrome' in proc_name or 'chromium' in proc_name:
+                    proc.kill()
+                    killed_count += 1
+                    logger.debug(f"Killed Chrome process: {proc.info['pid']}")
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+    except Exception as e:
+        logger.error(f"Error killing Chrome processes: {e}")
+    
+    if killed_count > 0:
+        logger.warning(f"Force killed {killed_count} Chrome processes")
+    return killed_count
+
+def count_chrome_processes():
+    """Count active Chrome/Chromium processes."""
+    count = 0
+    try:
+        for proc in psutil.process_iter(['name']):
+            try:
+                proc_name = proc.info['name'].lower()
+                if 'chrome' in proc_name or 'chromium' in proc_name:
+                    count += 1
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+    except Exception as e:
+        logger.error(f"Error counting Chrome processes: {e}")
+    return count
+
+async def ensure_max_browsers(max_browsers: int = 5):
+    """Ensure no more than max_browsers Chrome processes are running."""
+    chrome_count = count_chrome_processes()
+    
+    # Each browser spawns ~6-8 processes, so max_browsers * 10 is safe threshold
+    max_processes = max_browsers * 10
+    
+    if chrome_count > max_processes:
+        logger.warning(f"⚠️ Too many Chrome processes ({chrome_count}/{max_processes}), cleaning up...")
+        kill_all_chrome_processes()
+        await asyncio.sleep(2)  # Wait for processes to die
+        logger.info("✓ Chrome processes cleaned up")
+
 async def run_browser_instance(browser_id: int, proxy_config: dict) -> bool:
     """Run single browser instance with specific proxy and timeout."""
-    global stuck_browser_count
+    global stuck_browser_count, active_browsers
     
     try:
+        # Ensure we don't exceed max browsers before starting
+        await ensure_max_browsers(config.MAX_CONCURRENT_BROWSERS)
+        
         logger.info(f"[Browser {browser_id}] Starting with proxy: {proxy_config.get('server', 'N/A')}")
         
         # Check if this browser has been stuck before
@@ -23,6 +78,7 @@ async def run_browser_instance(browser_id: int, proxy_config: dict) -> bool:
         
         # Create agent instance
         agent = AutomationAgent()
+        active_browsers[browser_id] = agent
         
         # Override proxy for this specific browser BEFORE launching
         original_proxy_list = config.PROXY_LIST
@@ -50,25 +106,18 @@ async def run_browser_instance(browser_id: int, proxy_config: dict) -> bool:
             stuck_browser_count[browser_id] += 1
             logger.warning(f"[Browser {browser_id}] Stuck count: {stuck_browser_count[browser_id]}/2")
             
-            # Force cleanup
+            # Force cleanup with aggressive timeout
             try:
-                await asyncio.wait_for(agent.cleanup(), timeout=10)
+                await asyncio.wait_for(agent.cleanup(), timeout=5)
             except asyncio.TimeoutError:
                 logger.error(f"[Browser {browser_id}] Cleanup timeout, force killing...")
-                # Force kill all chrome processes
-                try:
-                    import psutil
-                    for proc in psutil.process_iter(['pid', 'name']):
-                        if 'chrome' in proc.info['name'].lower() or 'chromium' in proc.info['name'].lower():
-                            try:
-                                proc.kill()
-                                logger.warning(f"Force killed process: {proc.info['pid']}")
-                            except:
-                                pass
-                except Exception as e:
-                    logger.error(f"Force kill error: {e}")
+                kill_all_chrome_processes()
             
             success = False
+        finally:
+            # Remove from active browsers
+            if browser_id in active_browsers:
+                del active_browsers[browser_id]
         
         # Restore original proxy list
         config.PROXY_LIST = original_proxy_list
@@ -86,12 +135,24 @@ async def run_browser_instance(browser_id: int, proxy_config: dict) -> bool:
         if browser_id not in stuck_browser_count:
             stuck_browser_count[browser_id] = 0
         stuck_browser_count[browser_id] += 1
+        
+        # Remove from active browsers
+        if browser_id in active_browsers:
+            del active_browsers[browser_id]
+        
         return False
 
 async def run_multi_browser(num_browsers: int = None) -> None:
     """Run multiple browser instances concurrently."""
     if num_browsers is None:
         num_browsers = min(config.MAX_CONCURRENT_BROWSERS, len(config.PROXY_LIST))
+    
+    # Clean up any leftover Chrome processes before starting
+    chrome_count = count_chrome_processes()
+    if chrome_count > 0:
+        logger.warning(f"Found {chrome_count} leftover Chrome processes, cleaning up...")
+        kill_all_chrome_processes()
+        await asyncio.sleep(2)
     
     logger.info("=" * 60)
     logger.info(f"MULTI-BROWSER MODE: Running {num_browsers} browsers")
@@ -113,6 +174,11 @@ async def run_multi_browser(num_browsers: int = None) -> None:
     # Run all browsers concurrently
     logger.info(f"Launching {num_browsers} browsers concurrently...")
     results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Force cleanup after all browsers finish
+    logger.info("All browsers finished, cleaning up remaining processes...")
+    kill_all_chrome_processes()
+    await asyncio.sleep(1)
     
     # Summary
     logger.info("=" * 60)
@@ -149,9 +215,13 @@ async def run_multi_browser_loop() -> None:
             
         except KeyboardInterrupt:
             logger.info("Multi-browser loop interrupted by user")
+            # Clean up all Chrome processes
+            kill_all_chrome_processes()
             break
         except Exception as e:
             logger.error(f"Multi-browser iteration {iteration} error: {e}")
+            # Clean up on error
+            kill_all_chrome_processes()
             logger.info(f"Waiting {config.RESTART_DELAY}s before retry...")
             await asyncio.sleep(config.RESTART_DELAY)
 
